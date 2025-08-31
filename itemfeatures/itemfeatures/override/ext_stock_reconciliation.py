@@ -16,8 +16,151 @@ from erpnext.stock.doctype.inventory_dimension.inventory_dimension import get_in
 from erpnext.stock.doctype.serial_no.serial_no import get_serial_nos
 from itemfeatures.itemfeatures.override.utils import get_incoming_rate, get_stock_balance
 
+from itemfeatures.itemfeatures.override.monkey_patches import (
+	get_available_serial_nos
+)
+
 
 class ExtStockReconciliation(StockReconciliation):
+
+	def set_current_serial_and_batch_bundle(self, voucher_detail_no=None, save=False) -> None:
+		"""Set Serial and Batch Bundle for each item"""
+		for item in self.items:
+			if not frappe.db.exists("Item", item.item_code):
+				frappe.throw(_("Item {0} does not exist").format(item.item_code))
+
+			item_details = frappe.get_cached_value(
+				"Item", item.item_code, ["has_serial_no", "has_batch_no"], as_dict=1
+			)
+
+			if not (item_details.has_serial_no or item_details.has_batch_no):
+				continue
+
+			if (
+				not item.use_serial_batch_fields
+				and not item.reconcile_all_serial_batch
+				and not item.serial_and_batch_bundle
+			):
+				frappe.throw(
+					_("Row # {0}: Please add Serial and Batch Bundle for Item {1}").format(
+						item.idx, frappe.bold(item.item_code)
+					)
+				)
+
+			if not item.reconcile_all_serial_batch and item.serial_and_batch_bundle:
+				bundle = self.get_bundle_for_specific_serial_batch(item)
+				item.current_serial_and_batch_bundle = bundle.name
+				item.current_valuation_rate = abs(bundle.avg_rate)
+
+				if not item.valuation_rate:
+					item.valuation_rate = item.current_valuation_rate
+				continue
+
+			if not save and item.use_serial_batch_fields:
+				continue
+
+			if voucher_detail_no and voucher_detail_no != item.name:
+				continue
+
+			if not item.current_serial_and_batch_bundle:
+				serial_and_batch_bundle = frappe.get_doc(
+					{
+						"doctype": "Serial and Batch Bundle",
+						"item_code": item.item_code,
+						"warehouse": item.warehouse,
+						"posting_date": self.posting_date,
+						"posting_time": self.posting_time,
+						"voucher_type": self.doctype,
+						"type_of_transaction": "Outward",
+					}
+				)
+			else:
+				serial_and_batch_bundle = frappe.get_doc(
+					"Serial and Batch Bundle", item.current_serial_and_batch_bundle
+				)
+
+				serial_and_batch_bundle.set("entries", [])
+
+			if item_details.has_serial_no:
+				serial_nos_details = get_available_serial_nos(
+					frappe._dict(
+						{
+							"item_code": item.item_code,
+							"warehouse": item.warehouse,
+							"posting_date": self.posting_date,
+							"posting_time": self.posting_time,
+							"ignore_warehouse": 1,
+							"custom_feature": item.custom_feature,
+						}
+					)
+				)
+
+				for serial_no_row in serial_nos_details:
+					serial_and_batch_bundle.append(
+						"entries",
+						{
+							"serial_no": serial_no_row.serial_no,
+							"qty": -1,
+							"warehouse": serial_no_row.warehouse,
+							"batch_no": serial_no_row.batch_no,
+						},
+					)
+
+			elif item_details.has_batch_no:
+				batch_nos_details = get_available_batches(
+					frappe._dict(
+						{
+							"item_code": item.item_code,
+							"warehouse": item.warehouse,
+							"posting_date": self.posting_date,
+							"posting_time": self.posting_time,
+							"ignore_voucher_nos": [self.name],
+						}
+					)
+				)
+
+				for batch_no, qty in batch_nos_details.items():
+					serial_and_batch_bundle.append(
+						"entries",
+						{
+							"batch_no": batch_no,
+							"qty": qty * -1,
+							"warehouse": item.warehouse,
+						},
+					)
+
+			if not serial_and_batch_bundle.entries:
+				if voucher_detail_no:
+					return
+
+				continue
+
+			serial_and_batch_bundle.save()
+			item.current_serial_and_batch_bundle = serial_and_batch_bundle.name
+			item.current_qty = abs(serial_and_batch_bundle.total_qty)
+			item.current_valuation_rate = abs(serial_and_batch_bundle.avg_rate)
+			if save:
+				sle_creation = frappe.db.get_value(
+					"Serial and Batch Bundle", item.serial_and_batch_bundle, "creation"
+				)
+				creation = add_to_date(sle_creation, seconds=-1)
+				item.db_set(
+					{
+						"current_serial_and_batch_bundle": item.current_serial_and_batch_bundle,
+						"current_qty": item.current_qty,
+						"current_valuation_rate": item.current_valuation_rate,
+						"creation": creation,
+					}
+				)
+
+				serial_and_batch_bundle.db_set(
+					{
+						"creation": creation,
+						"voucher_no": self.name,
+						"voucher_detail_no": voucher_detail_no,
+					}
+				)
+
 
 	def remove_items_with_no_change(self):
 		"""Remove items if qty or rate is not changed"""

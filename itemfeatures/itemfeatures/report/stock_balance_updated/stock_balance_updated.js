@@ -1,7 +1,7 @@
 // Copyright (c) 2015, Frappe Technologies Pvt. Ltd. and Contributors and contributors
 // For license information, please see license.txt
 
-frappe.query_reports["Stock Balance"] = {
+frappe.query_reports["Stock Balance Updated"] = {
 	filters: [
 		{
 			fieldname: "company",
