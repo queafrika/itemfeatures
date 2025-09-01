@@ -7,7 +7,7 @@ app_description = "Add item features to Item and update BOM"
 app_email = "macharianyota@gmail.com"
 app_license = "MIT"
 
-app_ready = "itemfeatures.itemfeatures.override.apply_monkey_patches"
+#app_ready = "itemfeatures.itemfeatures.override.apply_monkey_patches"
 
 fixtures = [
     {
