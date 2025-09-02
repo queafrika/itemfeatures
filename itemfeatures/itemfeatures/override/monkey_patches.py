@@ -270,7 +270,7 @@ def get_sl_entries(self, d, args):
     return sl_dict
 
 
-def future_sle_exists(args, sl_entries=None, allow_force_reposting=True):
+def future_sle_exists(args, sl_entries=None):
 
 	key = (args.voucher_type, args.voucher_no)
 	if not hasattr(frappe.local, "future_sle"):
