@@ -9,6 +9,9 @@ from erpnext.stock.doctype.serial_and_batch_bundle.serial_and_batch_bundle impor
 )
 
 from erpnext.stock.serial_batch_bundle import BatchNoValuation, SerialNoValuation
+from erpnext.stock.utils import BarcodeScanResult, _update_item_info
+from frappe import _
+
 
 @frappe.whitelist()
 def get_stock_balance(
@@ -172,3 +175,59 @@ def get_incoming_rate(args, raise_error_if_no_rate=True):
 
 	return flt(in_rate)
 
+@frappe.whitelist()
+def scan_barcode(search_value: str) -> BarcodeScanResult:
+	def set_cache(data: BarcodeScanResult):
+		frappe.cache().set_value(f"erpnext:barcode_scan:{search_value}", data, expires_in_sec=120)
+
+	def get_cache() -> BarcodeScanResult | None:
+		if data := frappe.cache().get_value(f"erpnext:barcode_scan:{search_value}"):
+			return data
+
+	if scan_data := get_cache():
+		return scan_data
+
+	# search barcode no
+	barcode_data = frappe.db.get_value(
+		"Item Barcode",
+		{"barcode": search_value},
+		["barcode", "parent as item_code", "uom"],
+		as_dict=True,
+	)
+	if barcode_data:
+		_update_item_info(barcode_data)
+		set_cache(barcode_data)
+		return barcode_data
+
+	# search serial no
+	serial_no_data = frappe.db.get_value(
+		"Serial No",
+		search_value,
+		["name as serial_no", "item_code", "batch_no", "custom_feature"],
+		as_dict=True,
+	)
+	if serial_no_data:
+		_update_item_info(serial_no_data)
+		set_cache(serial_no_data)
+		return serial_no_data
+
+	# search batch no
+	batch_no_data = frappe.db.get_value(
+		"Batch",
+		search_value,
+		["name as batch_no", "item as item_code"],
+		as_dict=True,
+	)
+	if batch_no_data:
+		if frappe.get_cached_value("Item", batch_no_data.item_code, "has_serial_no"):
+			frappe.throw(
+				_(
+					"Batch No {0} is linked with Item {1} which has serial no. Please scan serial no instead."
+				).format(search_value, batch_no_data.item_code)
+			)
+
+		_update_item_info(batch_no_data)
+		set_cache(batch_no_data)
+		return batch_no_data
+
+	return {}
