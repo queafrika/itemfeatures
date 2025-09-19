@@ -1366,7 +1366,7 @@ def apply_monkey_patches():
 	import erpnext.stock.stock_balance
 	import erpnext.stock.stock_ledger
 	import erpnext.stock.utils
-
+	erpnext.stock.doctype.serial_and_batch_bundle.serial_and_batch_bundle 
 
 	from itemfeatures.itemfeatures.override.monkey_patches import (
 		update_bin_on_delete as update_bin_on_delete_custom,
@@ -1401,6 +1401,7 @@ def apply_monkey_patches():
 		repost_current_voucher as repost_current_voucher_custom,
 		get_item_list as get_item_list_custom,
 		update_packed_item_basic_data as update_packed_item_basic_data_custom,
+		get_available_serial_nos as get_available_serial_nos_custom,
 	)
 
 	from itemfeatures.itemfeatures.override.ext_stock_entry import (
@@ -1412,6 +1413,7 @@ def apply_monkey_patches():
 		get_item_data as get_item_data_custom,
 	)
 
+	erpnext.stock.doctype.serial_and_batch_bundle.serial_and_batch_bundle.get_available_serial_no = get_available_serial_nos_custom
 	erpnext.controllers.accounts_controller.update_bin_on_delete = update_bin_on_delete_custom
 	BuyingController.set_rate_for_standalone_debit_note = set_rate_for_standalone_debit_note_custom
 	erpnext.controllers.sales_and_purchase_return.get_rate_for_return = get_rate_for_return_custom

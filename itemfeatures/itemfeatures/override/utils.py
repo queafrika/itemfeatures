@@ -4,7 +4,7 @@ from frappe.utils import cstr, flt, nowdate, nowtime
 from erpnext.stock.utils import get_valuation_method, get_serial_nos_data, _get_fifo_lifo_rate
 
 import erpnext
-from erpnext.stock.doctype.serial_and_batch_bundle.serial_and_batch_bundle import (
+from itemfeatures.itemfeatures.override.monkey_patches import (
 	get_available_serial_nos,
 )
 
