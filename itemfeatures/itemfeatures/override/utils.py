@@ -4,9 +4,6 @@ from frappe.utils import cstr, flt, nowdate, nowtime
 from erpnext.stock.utils import get_valuation_method, get_serial_nos_data, _get_fifo_lifo_rate
 
 import erpnext
-from itemfeatures.itemfeatures.override.monkey_patches import (
-	get_available_serial_nos,
-)
 
 from erpnext.stock.serial_batch_bundle import BatchNoValuation, SerialNoValuation
 from erpnext.stock.utils import BarcodeScanResult, _update_item_info
@@ -55,6 +52,10 @@ def get_stock_balance(
 
 	if with_valuation_rate:
 		if with_serial_no:
+
+			from itemfeatures.itemfeatures.override.monkey_patches import (
+				get_available_serial_nos,
+)
 			serial_no_details = get_available_serial_nos(
 				frappe._dict(
 					{
