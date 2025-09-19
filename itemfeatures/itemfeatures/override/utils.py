@@ -1,6 +1,6 @@
 import frappe
 import json
-from frappe.utils import cstr, flt, nowdate, nowtime
+from frappe.utils import cstr, flt, nowdate, nowtime, cint
 from erpnext.stock.utils import get_valuation_method, get_serial_nos_data, _get_fifo_lifo_rate
 
 import erpnext
@@ -53,9 +53,6 @@ def get_stock_balance(
 	if with_valuation_rate:
 		if with_serial_no:
 
-			from itemfeatures.itemfeatures.override.monkey_patches import (
-				get_available_serial_nos,
-)
 			serial_no_details = get_available_serial_nos(
 				frappe._dict(
 					{
@@ -232,3 +229,67 @@ def scan_barcode(search_value: str) -> BarcodeScanResult:
 		return batch_no_data
 
 	return {}
+
+def get_available_serial_nos(kwargs):
+	from erpnext.stock.doctype.serial_and_batch_bundle.serial_and_batch_bundle import (
+		get_serial_nos_based_on_posting_date,
+		get_reserved_serial_nos,
+		get_non_expired_batches,
+	)
+	fields = ["name as serial_no", "warehouse"]
+	if kwargs.has_batch_no:
+		fields.append("batch_no")
+
+	order_by = "creation"
+	if kwargs.based_on == "LIFO":
+		order_by = "creation desc"
+	elif kwargs.based_on == "Expiry":
+		order_by = "amc_expiry_date asc"
+
+	filters = {"item_code": kwargs.item_code}
+
+	if kwargs.custom_feature is not None:
+		filters["custom_feature"] = kwargs.custom_feature 
+
+	# ignore_warehouse is used for backdated stock transactions
+	# There might be chances that the serial no not exists in the warehouse during backdated stock transactions
+	if not kwargs.get("ignore_warehouse"):
+		filters["warehouse"] = ("is", "set")
+		if kwargs.warehouse:
+			filters["warehouse"] = kwargs.warehouse
+
+	# Since SLEs are not present against Reserved Stock [POS invoices, SRE], need to ignore reserved serial nos.
+	ignore_serial_nos = get_reserved_serial_nos(kwargs)
+
+	# To ignore serial nos in the same record for the draft state
+	if kwargs.get("ignore_serial_nos"):
+		ignore_serial_nos.extend(kwargs.get("ignore_serial_nos"))
+
+	if kwargs.get("posting_date"):
+		if kwargs.get("posting_time") is None:
+			kwargs.posting_time = nowtime()
+
+		time_based_serial_nos = get_serial_nos_based_on_posting_date(kwargs, ignore_serial_nos)
+
+		if not time_based_serial_nos:
+			return []
+
+		filters["name"] = ("in", time_based_serial_nos)
+	elif ignore_serial_nos:
+		filters["name"] = ("not in", ignore_serial_nos)
+
+	if kwargs.get("batches"):
+		batches = get_non_expired_batches(kwargs.get("batches"))
+		if not batches:
+			return []
+
+		filters["batch_no"] = ("in", batches)
+	serials = frappe.get_all(
+		"Serial No",
+		fields=fields,
+		filters=filters,
+		limit=cint(kwargs.qty) or 10000000,
+		order_by=order_by,
+	)
+
+	return serials
