@@ -128,4 +128,4 @@ frappe.query_reports["Stock Balance Updated"] = {
 	},
 };
 
-erpnext.utils.add_inventory_dimensions("Stock Balance", 8);
+erpnext.utils.add_inventory_dimensions("Stock Balance Updated", 8);

@@ -124,4 +124,4 @@ frappe.query_reports["Stock Ledger Updated"] = {
 	},
 };
 
-erpnext.utils.add_inventory_dimensions("Stock Ledger", 10);
+erpnext.utils.add_inventory_dimensions("Stock Ledger Updated", 10);

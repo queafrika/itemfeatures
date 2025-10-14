@@ -9,13 +9,13 @@
  "is_standard": "Yes",
  "modified": "2020-04-30 13:46:14.680354",
  "modified_by": "Administrator",
- "module": "Stock",
+ "module": "itemfeatures",
  "name": "Stock Balance Updated",
  "owner": "Administrator",
  "prepared_report": 1,
  "query": "",
  "ref_doctype": "Stock Ledger Entry",
- "report_name": "Stock Balance",
+ "report_name": "Stock Balance Updated",
  "report_type": "Script Report",
  "roles": [
   {

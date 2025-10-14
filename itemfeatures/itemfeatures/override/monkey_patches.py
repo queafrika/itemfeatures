@@ -2,9 +2,10 @@ import frappe
 from frappe import _
 import erpnext
 from erpnext.controllers.sales_and_purchase_return import get_return_against_item_fields, get_filters
-from frappe.utils import cint, flt, format_datetime, now, nowtime, get_link_to_form
+from frappe.utils import cint, flt, format_datetime, now, nowtime, get_link_to_form, nowdate
 from frappe.query_builder.functions import Sum
 from erpnext.accounts.utils import cancel_exchange_gain_loss_journal, get_fiscal_year
+from erpnext.stock.reorder_item import get_item_warehouse_projected_qty, create_material_request, get_reorder_levels_for_variants
 from erpnext.stock.stock_balance import (
 	repost_actual_qty,
 	get_reserved_qty,
@@ -1351,6 +1352,142 @@ def get_available_serial_nos(kwargs):
 
 	return serials
 
+
+def _reorder_item():
+	material_requests = {"Purchase": {}, "Transfer": {}, "Material Issue": {}, "Manufacture": {}}
+	warehouse_company = frappe._dict(
+		frappe.db.sql(
+			"""select name, company from `tabWarehouse`
+		where disabled=0"""
+		)
+	)
+	default_company = (
+		erpnext.get_default_company() or frappe.db.sql("""select name from tabCompany limit 1""")[0][0]
+	)
+
+	items_to_consider = get_items_for_reorder()
+
+	if not items_to_consider:
+		return
+
+	item_warehouse_projected_qty = get_item_warehouse_projected_qty(items_to_consider)
+
+	def add_to_material_request(**kwargs):
+		if isinstance(kwargs, dict):
+			kwargs = frappe._dict(kwargs)
+
+		if kwargs.warehouse not in warehouse_company:
+			# a disabled warehouse
+			return
+
+		reorder_level = flt(kwargs.reorder_level)
+		reorder_qty = flt(kwargs.reorder_qty)
+
+		# projected_qty will be 0 if Bin does not exist
+		if kwargs.warehouse_group:
+			projected_qty = flt(
+				item_warehouse_projected_qty.get(kwargs.item_code, {}).get(kwargs.warehouse_group)
+			)
+		else:
+			projected_qty = flt(item_warehouse_projected_qty.get(kwargs.item_code, {}).get(kwargs.warehouse))
+
+		if (reorder_level or reorder_qty) and projected_qty <= reorder_level:
+			deficiency = reorder_level - projected_qty
+			if deficiency > reorder_qty:
+				reorder_qty = deficiency
+
+			company = warehouse_company.get(kwargs.warehouse) or default_company
+
+			material_requests[kwargs.material_request_type].setdefault(company, []).append(
+				{
+					"item_code": kwargs.item_code,
+					"warehouse": kwargs.warehouse,
+					"reorder_qty": reorder_qty,
+					"item_details": kwargs.item_details,
+					"custom_feature": kwargs.custom_feature,
+				}
+			)
+
+	for item_code, reorder_levels in items_to_consider.items():
+		for d in reorder_levels:
+			if d.has_variants:
+				continue
+
+			add_to_material_request(
+				item_code=item_code,
+				warehouse=d.warehouse,
+				reorder_level=d.warehouse_reorder_level,
+				reorder_qty=d.warehouse_reorder_qty,
+				material_request_type=d.material_request_type,
+				warehouse_group=d.warehouse_group,
+				custom_feature=d.custom_feature,
+				item_details=frappe._dict(
+					{
+						"item_code": item_code,
+						"name": item_code,
+						"item_name": d.item_name,
+						"item_group": d.item_group,
+						"brand": d.brand,
+						"description": d.description,
+						"stock_uom": d.stock_uom,
+						"purchase_uom": d.purchase_uom,
+						"lead_time_days": d.lead_time_days,
+					}
+				),
+			)
+
+	if material_requests:
+		return create_material_request(material_requests)
+
+
+def get_items_for_reorder() -> dict[str, list]:
+	reorder_table = frappe.qb.DocType("Item Reorder")
+	item_table = frappe.qb.DocType("Item")
+
+	query = (
+		frappe.qb.from_(reorder_table)
+		.inner_join(item_table)
+		.on(reorder_table.parent == item_table.name)
+		.select(
+			reorder_table.warehouse,
+			reorder_table.warehouse_group,
+			reorder_table.material_request_type,
+			reorder_table.warehouse_reorder_level,
+			reorder_table.warehouse_reorder_qty,
+			reorder_table.custom_feature,
+			item_table.name,
+			item_table.stock_uom,
+			item_table.purchase_uom,
+			item_table.description,
+			item_table.item_name,
+			item_table.item_group,
+			item_table.brand,
+			item_table.variant_of,
+			item_table.has_variants,
+			item_table.lead_time_days,
+		)
+		.where(
+			(item_table.disabled == 0)
+			& (item_table.is_stock_item == 1)
+			& (
+				(item_table.end_of_life.isnull())
+				| (item_table.end_of_life > nowdate())
+				| (item_table.end_of_life == "0000-00-00")
+			)
+		)
+	)
+
+	data = query.run(as_dict=True)
+	itemwise_reorder = frappe._dict({})
+	for d in data:
+		itemwise_reorder.setdefault(d.name, []).append(d)
+
+	itemwise_reorder = get_reorder_levels_for_variants(itemwise_reorder)
+
+	return itemwise_reorder
+
+
+
 def apply_monkey_patches():
 	from erpnext.controllers.buying_controller import BuyingController
 	from erpnext.controllers.selling_controller import SellingController
@@ -1360,6 +1497,7 @@ def apply_monkey_patches():
 	from erpnext.stock.stock_ledger import update_entries_after
 	import erpnext.controllers.accounts_controller
 	import erpnext.controllers.sales_and_purchase_return
+	import erpnext.stock.reorder_item
 	import erpnext.controllers.stock_controller
 	import erpnext.stock.doctype.stock_entry.stock_entry
 	import erpnext.stock.doctype.stock_reconciliation.stock_reconciliation
@@ -1402,6 +1540,7 @@ def apply_monkey_patches():
 		get_item_list as get_item_list_custom,
 		update_packed_item_basic_data as update_packed_item_basic_data_custom,
 		get_available_serial_nos as get_available_serial_nos_custom,
+		_reorder_item as _reorder_item_custom,
 	)
 
 	from itemfeatures.itemfeatures.override.ext_stock_entry import (
@@ -1420,6 +1559,7 @@ def apply_monkey_patches():
 	SellingController.set_incoming_rate = set_incoming_rate_custom
 	SellingController.get_item_list = get_item_list_custom
 	StockController.get_sl_entries = get_sl_entries_custom
+	erpnext.stock.reorder_item._reorder_item = _reorder_item_custom
 	erpnext.controllers.stock_controller.future_sle_exists = future_sle_exists_custom
 	erpnext.controllers.stock_controller.validate_future_sle_not_exists = validate_future_sle_not_exists_custom
 	erpnext.controllers.stock_controller.get_cached_data = get_cached_data_custom

@@ -5,6 +5,7 @@ from erpnext.stock.stock_balance import get_reserved_qty, update_bin_qty
 import json
 from frappe.utils import flt
 from frappe.model.mapper import get_mapped_doc
+from frappe import _
 
 
 class ExtSalesOrder(SalesOrder):

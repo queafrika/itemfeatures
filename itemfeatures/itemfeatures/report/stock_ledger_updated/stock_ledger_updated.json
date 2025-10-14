@@ -9,11 +9,11 @@
  "is_standard": "Yes", 
  "modified": "2017-02-24 20:14:07.626391", 
  "modified_by": "Administrator", 
- "module": "Stock", 
+ "module": "itemfeatures", 
  "name": "Stock Ledger Updated", 
  "owner": "Administrator", 
  "ref_doctype": "Stock Ledger Entry", 
- "report_name": "Stock Ledger", 
+ "report_name": "Stock Ledger Updated", 
  "report_type": "Script Report", 
  "roles": [
   {
