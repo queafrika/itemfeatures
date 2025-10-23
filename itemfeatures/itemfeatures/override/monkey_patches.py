@@ -1,11 +1,12 @@
 import frappe
 from frappe import _
 import erpnext
+from math import ceil
 from erpnext.controllers.sales_and_purchase_return import get_return_against_item_fields, get_filters
-from frappe.utils import cint, flt, format_datetime, now, nowtime, get_link_to_form, nowdate
+from frappe.utils import cint, flt, format_datetime, now, nowtime, get_link_to_form, nowdate, add_days
 from frappe.query_builder.functions import Sum
 from erpnext.accounts.utils import cancel_exchange_gain_loss_journal, get_fiscal_year
-from erpnext.stock.reorder_item import get_item_warehouse_projected_qty, create_material_request, get_reorder_levels_for_variants
+from erpnext.stock.reorder_item import get_item_warehouse_projected_qty, get_reorder_levels_for_variants, send_email_notification, notify_errors
 from erpnext.stock.stock_balance import (
 	repost_actual_qty,
 	get_reserved_qty,
@@ -24,7 +25,6 @@ from erpnext.stock.doctype.bin.bin import update_qty as bin_update_qty
 from itemfeatures.itemfeatures.override.utils import (
 	get_incoming_rate,
 )
-
 
 from erpnext.stock.stock_ledger import (
 	is_internal_transfer, 
@@ -1485,6 +1485,108 @@ def get_items_for_reorder() -> dict[str, list]:
 	itemwise_reorder = get_reorder_levels_for_variants(itemwise_reorder)
 
 	return itemwise_reorder
+
+
+def create_material_request(material_requests):
+	"""Create indent on reaching reorder level"""
+	mr_list = []
+	exceptions_list = []
+
+	def _log_exception(mr):
+		if frappe.local.message_log:
+			exceptions_list.extend(frappe.local.message_log)
+			frappe.local.message_log = []
+		else:
+			exceptions_list.append(frappe.get_traceback(with_context=True))
+
+		mr.log_error("Unable to create material request")
+
+	company_wise_mr = frappe._dict({})
+	for request_type in material_requests:
+		for company in material_requests[request_type]:
+			try:
+				items = material_requests[request_type][company]
+				if not items:
+					continue
+
+				mr = frappe.new_doc("Material Request")
+				mr.update(
+					{
+						"company": company,
+						"transaction_date": nowdate(),
+						"material_request_type": "Material Transfer"
+						if request_type == "Transfer"
+						else request_type,
+					}
+				)
+
+				for d in items:
+					d = frappe._dict(d)
+					item = d.get("item_details")
+					uom = item.stock_uom
+					conversion_factor = 1.0
+
+					if request_type == "Purchase":
+						uom = item.purchase_uom or item.stock_uom
+						if uom != item.stock_uom:
+							conversion_factor = (
+								frappe.db.get_value(
+									"UOM Conversion Detail",
+									{"parent": item.name, "uom": uom},
+									"conversion_factor",
+								)
+								or 1.0
+							)
+
+					must_be_whole_number = frappe.db.get_value("UOM", uom, "must_be_whole_number", cache=True)
+					qty = d.reorder_qty / conversion_factor
+					if must_be_whole_number:
+						qty = ceil(qty)
+
+					mr.append(
+						"items",
+						{
+							"doctype": "Material Request Item",
+							"item_code": d.item_code,
+							"schedule_date": add_days(nowdate(), cint(item.lead_time_days)),
+							"qty": qty,
+							"conversion_factor": conversion_factor,
+							"uom": uom,
+							"stock_uom": item.stock_uom,
+							"custom_feature": d.custom_feature,
+							"warehouse": d.warehouse,
+							"item_name": item.item_name,
+							"description": item.description,
+							"item_group": item.item_group,
+							"brand": item.brand,
+						},
+					)
+
+				schedule_dates = [d.schedule_date for d in mr.items]
+				mr.schedule_date = max(schedule_dates or [nowdate()])
+				mr.flags.ignore_mandatory = True
+				mr.insert()
+				mr.submit()
+				mr_list.append(mr)
+
+				company_wise_mr.setdefault(company, []).append(mr)
+
+			except Exception:
+				_log_exception(mr)
+
+	if company_wise_mr:
+		if getattr(frappe.local, "reorder_email_notify", None) is None:
+			frappe.local.reorder_email_notify = cint(
+				frappe.db.get_value("Stock Settings", None, "reorder_email_notify")
+			)
+
+		if frappe.local.reorder_email_notify:
+			send_email_notification(company_wise_mr)
+
+	if exceptions_list:
+		notify_errors(exceptions_list)
+
+	return mr_list
 
 
 
