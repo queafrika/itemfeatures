@@ -48,7 +48,8 @@ def make_work_orders(items, sales_order, company, project=None):
 			frappe.throw(_("Please select Qty against item {0}").format(i.get("item_code")))
 		
 		composite_feature = None
-		if i.get("custom_feature"):
+		feat = frappe.db.get_value("Sales Order Item", i.get("sales_order_item"), "custom_feature")
+		if feat:
 			composite_feature = frappe.get_doc("Item Feature", i.get("custom_feature"))
 
 		for n in range(i.get("pending_qty")):
