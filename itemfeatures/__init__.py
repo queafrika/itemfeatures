@@ -55,6 +55,7 @@ try:
         repost_current_voucher as repost_current_voucher_custom,
         get_item_list as get_item_list_custom,
         update_packed_item_basic_data as update_packed_item_basic_data_custom,
+		_reorder_item as _reorder_item_custom,
     )
 
     from itemfeatures.itemfeatures.override.ext_stock_entry import (
@@ -72,6 +73,7 @@ try:
     SellingController.set_incoming_rate = set_incoming_rate_custom
     SellingController.get_item_list = get_item_list_custom
     StockController.get_sl_entries = get_sl_entries_custom
+    erpnext.stock.reorder_item._reorder_item = _reorder_item_custom
     erpnext.controllers.stock_controller.future_sle_exists = future_sle_exists_custom
     erpnext.controllers.stock_controller.validate_future_sle_not_exists = validate_future_sle_not_exists_custom
     erpnext.controllers.stock_controller.get_cached_data = get_cached_data_custom
